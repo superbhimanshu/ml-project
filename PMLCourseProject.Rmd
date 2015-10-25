@@ -1,0 +1,199 @@
+---
+title: "PML-Project"
+author: "Himanshu Verma"
+date: "October 20, 2015"
+output:
+  html_document:
+    theme: cerulean
+---
+
+### Introduction:
+
+### Load Data
+```{r}
+library(lattice)
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(dplyr)
+library(reshape2)
+
+
+ set.seed(1234)
+ x <<- read.csv("pml-training.csv")
+ finalTest <<- read.csv("pml-testing.csv")
+```
+
+
+### Step 1 Data Cleaning:
+
+In this process, we will try to eliminate features which may not be that relevant for our algorithm because of what they represent or the absence of values beyond a certain threshold.
+Prilimnary analysis shows that there lot of columns in the training set where more than 97% of values are NA or empty. Moreover, we have columns like "X" (integer sequence), "user_name" and timestamps which do not provide relevant information. This step also helps us reduce feature dimensionality.
+
+
+### Step 2: Data Correlation/Relation:
+
+In this step, we will try to find if there exists any features pairs which are highly correlated. Here we list the variables which have more than 80% correlation.
+
+        Variabl 1             Variable 2     Correlation
+
+      total_accel_belt            roll_belt 0.9809241
+       gyros_forearm_z     gyros_dumbbell_z 0.9330422
+          accel_belt_y     total_accel_belt 0.9278069
+          accel_belt_y            roll_belt 0.9248983
+         magnet_belt_x         accel_belt_x 0.8920913
+      accel_dumbbell_z         yaw_dumbbell 0.8491322
+       gyros_forearm_z      gyros_forearm_y 0.8455626
+              yaw_belt            roll_belt 0.8152297
+          magnet_arm_z         magnet_arm_y 0.8144455
+          magnet_arm_x          accel_arm_x 0.8142732
+      accel_dumbbell_x       pitch_dumbbell 0.8082885
+
+This is pretty good indicator that preprocessing with principal component analysis should be used here or we can just drop one column from each of the above pairs.
+
+```{r}
+ y <- names(x)
+ filterData <<- data.frame()
+ ## cols vector is being used to track the column numbers which will be considered in the training
+ cols <<- numeric()
+ 
+ #based on correlation between columns, I figured out that following columns should not be considered in 
+ #training our model
+ #########Correlation estimation is done only on numeric columns which are considered relevant
+ #########for our training
+ ####Correlation Code ######
+ #### d_cor <<- as.matrix(cor(filterData[,1:44]))
+ #### d_cor_melt <<- arrange(melt(d_cor), -abs(value))
+ #### highCors <<- subset(d_cor_melt, value > .5)
+ ###########################
+ ignoreCols <- c("roll_belt","gyros_dumbbell_z",
+                 "magnet_belt_x","accel_belt_y","accel_dumbbell_z","gyros_forearm_y",
+                 "magnet_arm_y","accel_arm_x","accel_dumbbell_x")
+ 
+ ###### I also found out that a lot of columns values are more than 97% empty or NA, it turned out
+ ##that 19216 is the exact count when these columns were NA or empty therefore its hardcoded in the loop)
+ ### I have ignored column 1:6 because they dont provide any relevant information for modelling
+ j <- 1
+ for(i in y) {
+     s<- paste(i,sum(is.na(x[[i]])),sum(x[[i]] == ""), sum(is.null(x[[i]])), sep="  ")
+     if(sum(is.na(x[[i]]))!=19216 && sum(x[[i]] == "")!=19216 && sum(is.null(x[[i]]))!=19216 && (j>6)) {
+         if(!(i %in% ignoreCols)) {
+             cols <<- append(cols, j)
+         }
+     }
+     j <- j+1
+ }
+# filtering the training data based on all above arguements
+ filterData <<- subset(x[,cols])
+ 
+ # same analogy will be applied for the actual test data
+ filterTestData <<- subset(finalTest[,cols])
+
+```
+
+
+### Crossvalidation Procedure
+
+I have chosen default K-Fold crossvalidation which takes K = 10 and it is not repeated as I set repeats =1 in trainControl method. I have used preprocessing with PCA with threshold set to 90%.
+Training data was partitioned with probability 70% percent. So, the training data was divided in training and test set by 70% and 30% respectively. So,
+
+trainingData is 70% of actual training set,
+testingData is 30% of actual training set
+
+Creation Data Partition:
+
+```{r}
+ ## creating data partition within training set with 70-30 split
+ inTrain <- createDataPartition(y=filterData$classe, p=.7, list=FALSE)
+ trainingData <<- filterData[inTrain,]
+ testingData <<- filterData[-inTrain,]
+```
+
+
+```{r}
+ ### defining trainControl although repeats is set to 1 because time consumption was too high 
+ ctrl <- trainControl(method = "repeatedcv", repeats = 1)
+ ### preprocessing with Principal Component Analysis 
+ preObj <- preProcess(trainingData[,-45], method=c("center", "scale", "pca"), thresh=0.9)
+ trainPC <- predict(preObj, trainingData[,-45])
+ ## training random forest model
+ modelFit <<- train(trainingData$classe ~ ., data=trainPC, method="rf", trControl=ctrl)
+```
+
+
+### Conclusion:
+
+modelFit$finalModel
+
+Call:
+ randomForest(x = x, y = y, mtry = param$mtry) 
+               Type of random forest: classification
+                     Number of trees: 500
+No. of variables tried at each split: 2
+
+        OOB estimate of  error rate: 2.37%
+Confusion matrix:
+     A    B    C    D    E class.error
+A 3870   11   15    6    4  0.00921659
+B   46 2566   34    6    6  0.03461249
+C    6   40 2332   16    2  0.02671119
+D    5    6   80 2156    5  0.04262877
+E    0    9   13   15 2488  0.01465347
+
+### Prediction on testingData set
+
+```{r}
+ ##using same preprocessing object for testing data
+ testPC <- predict(preObj, testingData[,-45])
+ predictions <- predict(modelFit, newdata=testPC)
+ confusionMatrix(predictions, testingData$classe)
+```
+
+
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 1665   17    3    4    3
+         B    2 1105    9    3    1
+         C    3   13 1004   32    8
+         D    4    1   10  924    9
+         E    0    3    0    1 1061
+
+Overall Statistics
+                                          
+               Accuracy : 0.9786          
+                 95% CI : (0.9746, 0.9821)
+    No Information Rate : 0.2845          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.9729          
+ Mcnemar's Test P-Value : 4.058e-06       
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E
+Sensitivity            0.9946   0.9701   0.9786   0.9585   0.9806
+Specificity            0.9936   0.9968   0.9885   0.9951   0.9992
+Pos Pred Value         0.9840   0.9866   0.9472   0.9747   0.9962
+Neg Pred Value         0.9979   0.9929   0.9954   0.9919   0.9956
+Prevalence             0.2845   0.1935   0.1743   0.1638   0.1839
+Detection Rate         0.2829   0.1878   0.1706   0.1570   0.1803
+Detection Prevalence   0.2875   0.1903   0.1801   0.1611   0.1810
+Balanced Accuracy      0.9941   0.9835   0.9835   0.9768   0.9899
+
+out of sample error = 1 - Accuracy = .0214 (2.14%)
+
+
+### Predictions for Final Testing Set
+
+```{r}
+  # Here we check our model on actual test set provided in the project
+ finaltestPC <- predict(preObj, filterTestData[,-45])
+ predictions <- predict(modelFit, newdata=finaltestPC)
+ predictions
+
+```
+
+
+ B A C A A E D B A A B C B A E E A B B B
